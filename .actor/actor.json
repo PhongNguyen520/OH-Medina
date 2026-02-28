@@ -1,1 +1,1 @@
-{"actorSpecification":1,"name":"oh-medina-recorder-scraper","title":"OH Medina County Recorder Search Scraper","version":"1.0","dockerfile":"./Dockerfile","input":"./input_schema.json"}
+{"actorSpecification":1,"name":"oh-medina-recorder-scraper","title":"OH Medina County Recorder Search Scraper","version":"1.0","dockerfile":"./Dockerfile"}
