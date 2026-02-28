@@ -3,10 +3,10 @@ WORKDIR /app
 
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-COPY ["OH-Medina/OH-Medina/OH-Medina.csproj", "OH-Medina/OH-Medina/"]
-RUN dotnet restore "OH-Medina/OH-Medina/OH-Medina.csproj"
+COPY ["OH-Medina/OH-Medina.csproj", "OH-Medina/"]
+RUN dotnet restore "OH-Medina/OH-Medina.csproj"
 COPY . .
-WORKDIR "/src/OH-Medina/OH-Medina"
+WORKDIR "/src/OH-Medina"
 RUN dotnet build "OH-Medina.csproj" -c Release -o /app/build
 
 FROM build AS publish
