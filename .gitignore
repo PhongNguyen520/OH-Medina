@@ -1,0 +1,38 @@
+# Build
+bin/
+obj/
+out/
+[Dd]ebug/
+[Rr]elease/
+
+# IDE
+.vs/
+.vscode/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# Output & storage
+Output/
+apify_storage/
+
+# Playwright
+.playwright/
+
+# Local config (giữ input_schema.json, có thể ignore input.json nếu chứa secret)
+# input.json
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# NuGet
+*.nupkg
+.nuget/
+project.lock.json
+project.fragment.lock.json
+artifacts/
