@@ -103,7 +103,7 @@ public static class ApifyHelper
         return FetchInputFromApifyApi();
     }
 
-    /// <summary>Tries to load input from local input.json (cwd, baseDir, parent dirs). Returns null if not found or parse error.</summary>
+    /// <summary>Tries to load input from local input.json (cwd, baseDir, parent dirs). Returns null if not found or parse error. Supports wrapped {"input":{...}} or flat {...}.</summary>
     public static Task<T?> LoadLocalInputAsync<T>(CancellationToken ct = default) where T : class
     {
         var json = GetLocalInputJson();
@@ -111,6 +111,16 @@ public static class ApifyHelper
             return Task.FromResult<T?>(null);
         try
         {
+            using var doc = JsonDocument.Parse(json);
+            var root = doc.RootElement;
+            JsonElement inputProp;
+            if (root.ValueKind == JsonValueKind.Object &&
+                (root.TryGetProperty("input", out inputProp) || root.TryGetProperty("Input", out inputProp)) &&
+                inputProp.ValueKind == JsonValueKind.Object)
+            {
+                var unwrapped = inputProp.GetRawText();
+                return Task.FromResult<T?>(JsonSerializer.Deserialize<T>(unwrapped, InputJsonOptions));
+            }
             return Task.FromResult<T?>(JsonSerializer.Deserialize<T>(json, InputJsonOptions));
         }
         catch (JsonException)
