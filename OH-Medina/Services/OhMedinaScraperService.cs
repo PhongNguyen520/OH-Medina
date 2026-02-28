@@ -52,29 +52,44 @@ public class OhMedinaScraperService
             Console.WriteLine($"[OH_Medina] State load failed (continuing with full range): {ex.Message}");
         }
 
-        try
+        int maxRetries = 3;
+        for (int attempt = 1; attempt <= maxRetries; attempt++)
         {
-            await InitBrowserAsync();
+            try
+            {
+                await ApifyHelper.SetStatusMessageAsync($"Attempt {attempt} of {maxRetries}...");
 
-            _page = await _context!.NewPageAsync();
-            _page.SetDefaultTimeout(30_000);
+                await InitBrowserAsync();
 
-            await _page.GotoAsync(StartUrl, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
-            await _page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+                _page = await _context!.NewPageAsync();
+                _page.SetDefaultTimeout(30_000);
 
-            await ApifyHelper.SetStatusMessageAsync($"Searching dates: {input.StartDate} to {input.EndDate}...");
-            await SearchByDateAsync(input.StartDate, input.EndDate);
+                await _page.GotoAsync(StartUrl, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
+                await _page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
 
-            var records = await ExtractDataAsync();
+                await ApifyHelper.SetStatusMessageAsync($"Searching dates: {input.StartDate} to {input.EndDate}...");
+                await SearchByDateAsync(input.StartDate, input.EndDate);
 
-            var dateKey = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-            await ExportToCsvAndUploadAsync(records, dateKey);
-            await ApifyHelper.SetStatusMessageAsync("Success: All records exported to CSV and Dataset.", isTerminal: true);
-        }
-        catch (Exception ex)
-        {
-            await ApifyHelper.SetStatusMessageAsync($"Fatal Error: {ex.Message}", isTerminal: true);
-            throw;
+                var records = await ExtractDataAsync();
+
+                var dateKey = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                await ExportToCsvAndUploadAsync(records, dateKey);
+                await ApifyHelper.SetStatusMessageAsync("Success: All records exported to CSV and Dataset.", isTerminal: true);
+
+                break;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Attempt {attempt}] Error: {ex.Message}");
+                await StopAsync();
+                if (attempt == maxRetries)
+                {
+                    await ApifyHelper.SetStatusMessageAsync($"Fatal Error after {maxRetries} attempts: {ex.Message}", isTerminal: true);
+                    throw;
+                }
+                await ApifyHelper.SetStatusMessageAsync($"Attempt {attempt} failed. Retrying in 10 seconds...");
+                await Task.Delay(10000);
+            }
         }
     }
 
