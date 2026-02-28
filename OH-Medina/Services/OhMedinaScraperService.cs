@@ -30,6 +30,8 @@ public class OhMedinaScraperService
     {
         input ??= new InputConfig();
 
+        await ApifyHelper.SetStatusMessageAsync("Starting OH-Medina scraper...");
+
         // Apify State/Checkpoint — resume from last processed date if present
         try
         {
@@ -40,6 +42,7 @@ public class OhMedinaScraperService
                 {
                     var resumeStart = lastDate.AddDays(1).ToString("MM/dd/yyyy", CultureInfo.InvariantCulture);
                     input.StartDate = resumeStart;
+                    await ApifyHelper.SetStatusMessageAsync($"Resuming from checkpoint: StartDate set to {input.StartDate}...");
                     Console.WriteLine($"[OH_Medina] Resuming from checkpoint: StartDate set to {resumeStart} (last processed: {state.LastProcessedDate})");
                 }
             }
@@ -49,22 +52,30 @@ public class OhMedinaScraperService
             Console.WriteLine($"[OH_Medina] State load failed (continuing with full range): {ex.Message}");
         }
 
-        await InitBrowserAsync();
+        try
+        {
+            await InitBrowserAsync();
 
-        _page = await _context!.NewPageAsync();
-        _page.SetDefaultTimeout(30_000);
+            _page = await _context!.NewPageAsync();
+            _page.SetDefaultTimeout(30_000);
 
-        await _page.GotoAsync(StartUrl, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
-        await _page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
+            await _page.GotoAsync(StartUrl, new PageGotoOptions { WaitUntil = WaitUntilState.DOMContentLoaded });
+            await _page.WaitForLoadStateAsync(LoadState.DOMContentLoaded);
 
-        await SearchByDateAsync(input.StartDate, input.EndDate);
+            await ApifyHelper.SetStatusMessageAsync($"Searching dates: {input.StartDate} to {input.EndDate}...");
+            await SearchByDateAsync(input.StartDate, input.EndDate);
 
-        // Placeholder: extract data from results
-        var records = await ExtractDataAsync();
+            var records = await ExtractDataAsync();
 
-        // Placeholder: export to pipe-delimited CSV and upload to Key-Value Store
-        var dateKey = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
-        await ExportToCsvAndUploadAsync(records, dateKey);
+            var dateKey = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+            await ExportToCsvAndUploadAsync(records, dateKey);
+            await ApifyHelper.SetStatusMessageAsync("Success: All records exported to CSV and Dataset.", isTerminal: true);
+        }
+        catch (Exception ex)
+        {
+            await ApifyHelper.SetStatusMessageAsync($"Fatal Error: {ex.Message}", isTerminal: true);
+            throw;
+        }
     }
 
     /// <summary>Fills the date range and submits the search form. Waits for results to start loading.</summary>
@@ -92,8 +103,19 @@ public class OhMedinaScraperService
 
         var rows = _page.Locator(".resultRow");
         var count = await rows.CountAsync();
+
+        if (count == 0)
+        {
+            await ApifyHelper.SetStatusMessageAsync("Finished: No records found.", isTerminal: true);
+            return records;
+        }
+
+        await ApifyHelper.SetStatusMessageAsync($"Found {count} records. Preparing to extract...");
+
         for (var i = 0; i < count; i++)
         {
+            await ApifyHelper.SetStatusMessageAsync($"Processing record {i + 1} of {count}...");
+
             await WaitForLoadingBackdropHiddenAsync(_page);
 
             var row = rows.Nth(i);
