@@ -66,11 +66,11 @@ public class OhMedinaScraperService
 
             if (!searchSuccess) return;
 
-            var records = await ExtractDataAsync();
+            var (records, total, succeeded, failed) = await ExtractDataAsync();
 
             var dateKey = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             await CsvExportHelper.ExportToCsvAndUploadAsync(records, dateKey);
-            await ApifyHelper.SetStatusMessageAsync("Success: All records exported to CSV and Dataset.", isTerminal: true);
+            await ApifyHelper.SetStatusMessageAsync($"Finished! Total {total} requests: {succeeded} succeeded, {failed} failed.", isTerminal: true);
         }
         catch (Exception ex)
         {
@@ -97,10 +97,10 @@ public class OhMedinaScraperService
     }
 
     /// <summary>Extract data from results page: expand each row, map to OhMedinaRecord, collapse.</summary>
-    async Task<List<OhMedinaRecord>> ExtractDataAsync()
+    async Task<(List<OhMedinaRecord> records, int total, int succeeded, int failed)> ExtractDataAsync()
     {
         var records = new List<OhMedinaRecord>();
-        if (_page == null) return records;
+        if (_page == null) return (records, 0, 0, 0);
 
         var rows = _page.Locator(".resultRow");
         var count = await rows.CountAsync();
@@ -108,47 +108,58 @@ public class OhMedinaScraperService
         if (count == 0)
         {
             await ApifyHelper.SetStatusMessageAsync("Finished: No records found.", isTerminal: true);
-            return records;
+            return (records, 0, 0, 0);
         }
 
         await ApifyHelper.SetStatusMessageAsync($"Found {count} records. Preparing to extract...");
+
+        var succeeded = 0;
+        var failed = 0;
 
         for (var i = 0; i < count; i++)
         {
             await ApifyHelper.SetStatusMessageAsync($"Processing record {i + 1} of {count}...");
 
-            await DomHelper.WaitForLoadingBackdropHiddenAsync(_page);
-
-            var row = rows.Nth(i);
-            var summary = row.Locator(".resultRowSummary");
-
-            await DomHelper.DomClickAsync(summary);
-            var detail = row.Locator(".resultRowDetail");
-            await detail.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
-
-            var record = await ExtractRecordFromRowAsync(row);
-
-            var rowDetailContainer = row.Locator(".resultRowDetailContainer");
-            var imageIcon = rowDetailContainer.Locator("i.fa-file-alt").First;
-            if (await imageIcon.CountAsync() > 0 && await imageIcon.IsVisibleAsync())
-                record.PdfUrl = await PdfDownloader.TryDownloadPdfAsync(_page, record.DocumentNo);
-
-            records.Add(record);
-            await ApifyHelper.PushSingleDataAsync(record);
-
-            row = _page.Locator(".resultRow").Nth(i);
-            summary = row.Locator(".resultRowSummary");
-            detail = row.Locator(".resultRowDetail");
-
-            await DomHelper.DomClickAsync(summary);
             try
             {
-                await detail.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
+                await DomHelper.WaitForLoadingBackdropHiddenAsync(_page);
+
+                var row = rows.Nth(i);
+                var summary = row.Locator(".resultRowSummary");
+
+                await DomHelper.DomClickAsync(summary);
+                var detail = row.Locator(".resultRowDetail");
+                await detail.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+
+                var record = await ExtractRecordFromRowAsync(row);
+
+                var rowDetailContainer = row.Locator(".resultRowDetailContainer");
+                var imageIcon = rowDetailContainer.Locator("i.fa-file-alt").First;
+                if (await imageIcon.CountAsync() > 0 && await imageIcon.IsVisibleAsync())
+                    record.PdfUrl = await PdfDownloader.TryDownloadPdfAsync(_page, record.DocumentNo);
+
+                records.Add(record);
+                await ApifyHelper.PushSingleDataAsync(record);
+                succeeded++;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[OH_Medina] Error processing record {i + 1}: {ex.Message}");
+                failed++;
+            }
+
+            var row2 = _page.Locator(".resultRow").Nth(i);
+            var summary2 = row2.Locator(".resultRowSummary");
+            var detail2 = row2.Locator(".resultRowDetail");
+            await DomHelper.DomClickAsync(summary2);
+            try
+            {
+                await detail2.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
             }
             catch { }
         }
 
-        return records;
+        return (records, count, succeeded, failed);
     }
 
     async Task<OhMedinaRecord> ExtractRecordFromRowAsync(ILocator row)
