@@ -111,14 +111,19 @@ public class OhMedinaScraperService
             return (records, 0, 0, 0);
         }
 
-        await ApifyHelper.SetStatusMessageAsync($"Found {count} records. Preparing to extract...");
+        const int TestLimit = 5;
+        var toProcess = Math.Min(count, TestLimit);
+        if (count > TestLimit)
+            Console.WriteLine($"[OH_Medina] Limiting to {TestLimit} records for test (total {count} skipped).");
+
+        await ApifyHelper.SetStatusMessageAsync($"Found {toProcess} records. Preparing to extract...");
 
         var succeeded = 0;
         var failed = 0;
 
-        for (var i = 0; i < count; i++)
+        for (var i = 0; i < toProcess; i++)
         {
-            await ApifyHelper.SetStatusMessageAsync($"Processing record {i + 1} of {count}...");
+            await ApifyHelper.SetStatusMessageAsync($"Processing record {i + 1} of {toProcess}...");
 
             try
             {
@@ -159,7 +164,7 @@ public class OhMedinaScraperService
             catch { }
         }
 
-        return (records, count, succeeded, failed);
+        return (records, toProcess, succeeded, failed);
     }
 
     async Task<OhMedinaRecord> ExtractRecordFromRowAsync(ILocator row)
