@@ -33,8 +33,6 @@ public static class ApifyHelper
             Console.WriteLine("[ApifyHelper] No input JSON found; using defaults.");
             return new T();
         }
-        var preview = json.Length > 500 ? json[..500] + "..." : json;
-        Console.WriteLine($"[ApifyHelper] Input JSON (first 500 chars): {preview}");
         try
         {
             using var doc = JsonDocument.Parse(json);
