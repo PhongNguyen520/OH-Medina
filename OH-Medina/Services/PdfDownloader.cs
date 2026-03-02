@@ -26,10 +26,15 @@ public static class PdfDownloader
     {
         var docId = documentNumber;
         var safeFileName = SanitizeFileName(docId) + ".pdf";
+        var isApify = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("APIFY_IS_AT_HOME"));
 
-        var localDir = Path.Combine("Output", "PDFs");
-        Directory.CreateDirectory(localDir);
-        var fullPath = Path.Combine(localDir, safeFileName);
+        var fullPath = "";
+        if (!isApify)
+        {
+            var localDir = Path.Combine("Output", "PDFs");
+            Directory.CreateDirectory(localDir);
+            fullPath = Path.Combine(localDir, safeFileName);
+        }
         var pdfUrlToReturn = "";
 
         try
@@ -109,24 +114,24 @@ public static class PdfDownloader
             var commaIndex = base64String.IndexOf(",", StringComparison.Ordinal);
             var base64Data = commaIndex >= 0 ? base64String.Substring(commaIndex + 1) : base64String;
             var pdfBytes = Convert.FromBase64String(base64Data);
-            await File.WriteAllBytesAsync(fullPath, pdfBytes);
 
-            Console.WriteLine($"[OH_Medina] Successfully extracted original PDF from Blob: {fullPath}");
-
-            await page.EvaluateAsync(@"() => { document.getElementById('printJS')?.remove(); }");
-
-            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("APIFY_IS_AT_HOME")))
+            if (isApify)
             {
                 await ApifyHelper.SaveKeyValueRecordAsync(safeFileName, pdfBytes, "application/pdf");
                 var storeId = Environment.GetEnvironmentVariable("APIFY_DEFAULT_KEY_VALUE_STORE_ID");
                 pdfUrlToReturn = string.IsNullOrEmpty(storeId)
                     ? ""
                     : $"https://api.apify.com/v2/key-value-stores/{storeId}/records/{Uri.EscapeDataString(safeFileName)}?disableRedirect=true";
+                Console.WriteLine($"[OH_Medina] Successfully extracted PDF and uploaded to store: {safeFileName}");
             }
             else
             {
+                await File.WriteAllBytesAsync(fullPath, pdfBytes);
                 pdfUrlToReturn = fullPath;
+                Console.WriteLine($"[OH_Medina] Successfully extracted original PDF from Blob: {fullPath}");
             }
+
+            await page.EvaluateAsync(@"() => { document.getElementById('printJS')?.remove(); }");
         }
         catch (Exception ex)
         {
