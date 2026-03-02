@@ -47,7 +47,7 @@ public static class PdfDownloader
 
             await DomHelper.DomClickAsync(imageIcon);
 
-            await page.Locator("canvas#imageCanvas").WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 30_000 });
+            await page.Locator("canvas#imageCanvas").WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 60_000 });
             await Task.Delay(1000);
 
             await page.EvaluateAsync(@"() => {

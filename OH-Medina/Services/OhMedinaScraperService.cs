@@ -66,7 +66,7 @@ public class OhMedinaScraperService
 
             if (!searchSuccess) return;
 
-            var (records, total, succeeded, failed) = await ExtractDataAsync();
+            var (records, total, succeeded, failed) = await ExtractDataAsync(input);
 
             var dateKey = DateTime.UtcNow.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
             await CsvExportHelper.ExportToCsvAndUploadAsync(records, dateKey);
@@ -97,11 +97,12 @@ public class OhMedinaScraperService
     }
 
     /// <summary>Extract data from results page: expand each row, map to OhMedinaRecord, collapse.</summary>
-    async Task<(List<OhMedinaRecord> records, int total, int succeeded, int failed)> ExtractDataAsync()
+    async Task<(List<OhMedinaRecord> records, int total, int succeeded, int failed)> ExtractDataAsync(InputConfig input)
     {
         var records = new List<OhMedinaRecord>();
         if (_page == null) return (records, 0, 0, 0);
 
+        input ??= new InputConfig();
         var rows = _page.Locator(".resultRow");
         var count = await rows.CountAsync();
 
@@ -115,6 +116,7 @@ public class OhMedinaScraperService
 
         var succeeded = 0;
         var failed = 0;
+        var rowRetrySet = new HashSet<int>();
 
         for (var i = 0; i < count; i++)
         {
@@ -124,7 +126,20 @@ public class OhMedinaScraperService
             {
                 await DomHelper.WaitForLoadingBackdropHiddenAsync(_page);
 
+                if (i >= 15 && i % 15 == 0)
+                {
+                    var resultsContainer = _page.Locator("div.searchResults");
+                    if (await resultsContainer.CountAsync() > 0)
+                    {
+                        var scrollFactor = 0.2 * (1 + i / 15);
+                        await resultsContainer.First.EvaluateAsync("(el, factor) => { el.scrollTop = el.scrollHeight * Math.min(factor, 0.95); }", scrollFactor);
+                        await Task.Delay(500);
+                    }
+                }
+
                 var row = rows.Nth(i);
+                await row.ScrollIntoViewIfNeededAsync();
+                await Task.Delay(300);
                 var summary = row.Locator(".resultRowSummary");
 
                 await DomHelper.DomClickAsync(summary);
@@ -136,7 +151,42 @@ public class OhMedinaScraperService
                 var rowDetailContainer = row.Locator(".resultRowDetailContainer");
                 var imageIcon = rowDetailContainer.Locator("i.fa-file-alt").First;
                 if (await imageIcon.CountAsync() > 0 && await imageIcon.IsVisibleAsync())
-                    record.PdfUrl = await PdfDownloader.TryDownloadPdfAsync(_page, record.DocumentNo);
+                {
+                    int pdfRetries = 2;
+                    bool pdfSuccess = false;
+                    for (int r = 1; r <= pdfRetries; r++)
+                    {
+                        try
+                        {
+                            record.PdfUrl = await PdfDownloader.TryDownloadPdfAsync(_page!, record.DocumentNo);
+                            pdfSuccess = true;
+                            break;
+                        }
+                        catch (Exception pdfEx)
+                        {
+                            Console.WriteLine($"[OH_Medina] PDF extraction failed for {record.DocumentNo} on attempt {r}: {pdfEx.Message}");
+                            if (r == pdfRetries) break;
+
+                            Console.WriteLine($"[OH_Medina] Server might be overwhelmed (502). Renewing session...");
+                            await ApifyHelper.SetStatusMessageAsync($"Renewing session to prevent 502 Bad Gateway at record {i + 1}...");
+
+                            await _page.ReloadAsync(new PageReloadOptions { WaitUntil = WaitUntilState.NetworkIdle });
+                            await Task.Delay(5000);
+
+                            await SearchByDateAsync(input.StartDate, input.EndDate);
+
+                            rows = _page.Locator(".resultRow");
+                            row = rows.Nth(i);
+                            await row.ScrollIntoViewIfNeededAsync();
+                            summary = row.Locator(".resultRowSummary");
+                            detail = row.Locator(".resultRowDetail");
+
+                            await DomHelper.DomClickAsync(summary);
+                            await detail.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Visible, Timeout = 10_000 });
+                        }
+                    }
+                    if (!pdfSuccess) failed++;
+                }
 
                 records.Add(record);
                 await ApifyHelper.PushSingleDataAsync(record);
@@ -146,17 +196,47 @@ public class OhMedinaScraperService
             {
                 Console.WriteLine($"[OH_Medina] Error processing record {i + 1}: {ex.Message}");
                 failed++;
+
+                try
+                {
+                    await _page!.ReloadAsync(new PageReloadOptions { WaitUntil = WaitUntilState.NetworkIdle });
+                    await SearchByDateAsync(input.StartDate, input.EndDate);
+                    rows = _page.Locator(".resultRow");
+                }
+                catch { }
+
+                // Retry this row index once after session renewal, then move on.
+                if (!rowRetrySet.Contains(i))
+                {
+                    rowRetrySet.Add(i);
+                    i--;
+                    continue;
+                }
             }
 
-            var row2 = _page.Locator(".resultRow").Nth(i);
-            var summary2 = row2.Locator(".resultRowSummary");
-            var detail2 = row2.Locator(".resultRowDetail");
-            await DomHelper.DomClickAsync(summary2);
             try
             {
-                await detail2.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
+                var row2 = _page!.Locator(".resultRow").Nth(i);
+                var summary2 = row2.Locator(".resultRowSummary");
+                var detail2 = row2.Locator(".resultRowDetail");
+                if (await detail2.IsVisibleAsync())
+                {
+                    await DomHelper.DomClickAsync(summary2);
+                    await detail2.WaitForAsync(new LocatorWaitForOptions { State = WaitForSelectorState.Hidden, Timeout = 5_000 });
+                }
             }
-            catch { }
+            catch (Exception collapseEx)
+            {
+                Console.WriteLine($"[OH_Medina] Collapse row {i + 1} failed (continuing): {collapseEx.Message}");
+            }
+
+            if (i > 0 && i % 25 == 0)
+            {
+                Console.WriteLine("[OH_Medina] Pausing for 5 seconds to cool down server...");
+                await Task.Delay(5_000);
+            }
+
+            await Task.Delay(1500);
         }
 
         return (records, count, succeeded, failed);
